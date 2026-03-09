@@ -1,0 +1,580 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>PATH Tracker</title>
+
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="PATH">
+  <meta name="theme-color" content="#0f0f1a">
+
+  <style>
+    :root {
+      --bg:     #0f0f1a;
+      --card:   #1a1a2e;
+      --card2:  #16213e;
+      --border: #2a2a4a;
+      --text:   #e8e8f0;
+      --muted:  #8888aa;
+      --accent: #4f8ef7;
+      --green:  #4caf50;
+      --yellow: #ffc107;
+      --red:    #f44336;
+      --dim:    #555577;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      padding-top: env(safe-area-inset-top, 0);
+      padding-bottom: env(safe-area-inset-bottom, 0);
+    }
+
+    /* ── Header ── */
+    header {
+      background: var(--card);
+      border-bottom: 1px solid var(--border);
+      padding: 16px 20px 14px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .logo { font-size: 20px; font-weight: 700; letter-spacing: -0.5px; }
+    .logo span { color: var(--accent); }
+    #status { font-size: 11px; color: var(--muted); text-align: right; line-height: 1.3; }
+    #status.error { color: var(--red); }
+
+    /* ── Auto-refresh progress bar ── */
+    .progress-track {
+      height: 3px;
+      background: var(--border);
+      overflow: hidden;
+    }
+    #progress-fill {
+      height: 100%;
+      width: 0%;
+      background: var(--accent);
+      transition: none;
+      border-radius: 0 2px 2px 0;
+    }
+
+    /* ── App layout (sidebar + content) ── */
+    .app-layout {
+      display: flex;
+      align-items: stretch;
+    }
+
+    /* ── Left tab sidebar ── */
+    .tab-sidebar {
+      width: 72px;
+      flex-shrink: 0;
+      background: var(--card);
+      display: flex;
+      flex-direction: column;
+    }
+
+    .tab {
+      padding: 18px 6px;
+      background: none;
+      border: none;
+      border-right: 3px solid var(--border);
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 600;
+      line-height: 1.5;
+      text-align: center;
+      cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+      transition: color 0.15s, border-color 0.15s, background 0.15s;
+    }
+    .tab + .tab { border-top: 1px solid var(--border); }
+    .tab.active {
+      color: var(--accent);
+      border-right-color: var(--accent);
+      background: rgba(79, 142, 247, 0.07);
+    }
+
+    .content-wrap { flex: 1; min-width: 0; }
+
+    /* ── Custom station picker ── */
+    .custom-picker {
+      background: var(--card2);
+      border-bottom: 1px solid var(--border);
+      padding: 12px 16px;
+    }
+    .picker-row {
+      display: flex;
+      align-items: flex-end;
+      gap: 10px;
+    }
+    .picker-group { flex: 1; min-width: 0; }
+    .picker-label {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.7px;
+      color: var(--muted);
+      margin-bottom: 5px;
+    }
+    .station-select {
+      width: 100%;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text);
+      font-size: 14px;
+      font-weight: 500;
+      padding: 8px 10px;
+      -webkit-appearance: none;
+      appearance: none;
+      cursor: pointer;
+    }
+    .station-select:focus { outline: none; border-color: var(--accent); }
+    .picker-arrow {
+      font-size: 18px;
+      color: var(--dim);
+      flex-shrink: 0;
+      padding-bottom: 9px;
+    }
+
+    /* ── Main content ── */
+    main { padding: 14px; }
+
+    /* ── Route cards ── */
+    .route-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      margin-bottom: 16px;
+      overflow: hidden;
+    }
+    .route-header {
+      padding: 12px 16px;
+      background: var(--card2);
+      border-bottom: 1px solid var(--border);
+    }
+    .route-title {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      margin-bottom: 2px;
+    }
+    .route-label { font-size: 17px; font-weight: 700; }
+
+    /* ── Train rows ── */
+    .train-row {
+      display: flex;
+      align-items: center;
+      padding: 11px 16px;
+      border-bottom: 1px solid var(--border);
+      gap: 12px;
+    }
+    .train-row:last-child { border-bottom: none; }
+    .train-row.dim { opacity: 0.4; }
+
+    .line-colors { display: flex; flex-direction: column; gap: 3px; flex-shrink: 0; }
+    .line-dot { width: 9px; height: 9px; border-radius: 50%; }
+
+    .train-info { flex: 1; min-width: 0; }
+    .train-headsign {
+      font-size: 14px;
+      font-weight: 600;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .train-note { font-size: 11px; color: var(--muted); margin-top: 1px; }
+
+    .train-time { text-align: right; flex-shrink: 0; }
+    .minutes { font-size: 24px; font-weight: 800; line-height: 1; }
+    .minutes.now  { font-size: 14px; color: var(--green); font-weight: 700; }
+    .minutes.soon { color: var(--yellow); }
+    .minutes-label { font-size: 10px; color: var(--muted); text-align: right; }
+    .arrival-time  { font-size: 10px; color: var(--dim);   text-align: right; margin-top: 1px; }
+
+    .section-label {
+      font-size: 11px;
+      color: var(--dim);
+      text-transform: uppercase;
+      letter-spacing: 0.7px;
+      padding: 8px 16px 4px;
+      border-bottom: 1px solid var(--border);
+    }
+    .empty {
+      padding: 18px 16px;
+      color: var(--muted);
+      font-size: 14px;
+      text-align: center;
+    }
+    .loading {
+      padding: 20px 16px;
+      color: var(--muted);
+      font-size: 14px;
+      text-align: center;
+      animation: pulse 1.2s ease-in-out infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 0.4; }
+      50%       { opacity: 1; }
+    }
+
+    /* ── Refresh button ── */
+    .refresh-btn {
+      display: block;
+      width: 100%;
+      margin-bottom: 20px;
+      padding: 12px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      color: var(--muted);
+      font-size: 13px;
+      cursor: pointer;
+      text-align: center;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .refresh-btn:active { opacity: 0.6; }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="logo">🚇 <span>PATH</span></div>
+  <div id="status">Loading…</div>
+</header>
+
+<div class="progress-track">
+  <div id="progress-fill"></div>
+</div>
+
+<div class="app-layout">
+  <nav class="tab-sidebar" id="tab-sidebar"></nav>
+
+  <div class="content-wrap">
+    <div id="custom-picker" class="custom-picker" style="display:none">
+      <div class="picker-row">
+        <div class="picker-group">
+          <div class="picker-label">From</div>
+          <select id="sel-from" class="station-select"></select>
+        </div>
+        <div class="picker-arrow">→</div>
+        <div class="picker-group">
+          <div class="picker-label">To</div>
+          <select id="sel-to" class="station-select"></select>
+        </div>
+      </div>
+    </div>
+
+    <main>
+      <div class="route-card">
+        <div class="route-header">
+          <div class="route-title">Outbound</div>
+          <div id="label-out" class="route-label">—</div>
+        </div>
+        <div id="trains-out" class="loading">Fetching trains…</div>
+      </div>
+
+      <div class="route-card">
+        <div class="route-header">
+          <div class="route-title">Return</div>
+          <div id="label-ret" class="route-label">—</div>
+        </div>
+        <div id="trains-ret" class="loading">Fetching trains…</div>
+      </div>
+
+      <button class="refresh-btn" onclick="manualRefresh()">↻ Refresh now</button>
+    </main>
+  </div>
+</div>
+
+<script>
+  const PANYNJ_URL = 'https://www.panynj.gov/bin/portauthority/ridepath.json';
+  const API_URL    = 'https://api.codetabs.com/v1/proxy/?quest=' + PANYNJ_URL;
+  const REFRESH_MS = 30000;
+
+  // PATH line topology — each array is ordered NJ-terminal → NY-terminal.
+  // Higher index = closer to NY. Used to determine direction and which trains stop where.
+  const LINES = [
+    ['NWK', 'HAR', 'JSQ', 'GRV', 'EXP', 'WTC'],
+    ['HOB', 'EXP', 'WTC'],
+    ['JSQ', 'GRV', 'NEW', 'HOB', 'CHR', '09S', '14S', '23S', '33S'],
+    ['NWK', 'HAR', 'JSQ', 'GRV', 'NEW', 'HOB', 'CHR', '09S', '14S', '23S', '33S'],
+    ['HOB', 'CHR', '09S', '14S', '23S', '33S'],
+  ];
+
+  const STATIONS = {
+    'NWK': 'Newark',
+    'HAR': 'Harrison',
+    'JSQ': 'Journal Sq',
+    'GRV': 'Grove St',
+    'EXP': 'Exchange Pl',
+    'NEW': 'Newport',
+    'HOB': 'Hoboken',
+    'WTC': 'World Trade Ctr',
+    'CHR': 'Christopher St',
+    '09S': '9th St',
+    '14S': '14th St',
+    '23S': '23rd St',
+    '33S': '33rd St',
+  };
+
+  // Preset route pairs shown as quick-select tabs in the left sidebar
+  const PRESETS = [
+    { id: 'grv-23s', tabHtml: 'Grove St<br>↔ 23rd',  from: 'GRV', to: '23S' },
+    { id: 'exp-wtc', tabHtml: 'Exch Pl<br>↔ WTC',    from: 'EXP', to: 'WTC' },
+  ];
+
+  let activeTabId  = PRESETS[0].id;
+  let lastResults  = [];
+  let refreshTimer = null;
+
+  // ── Routing logic ──────────────────────────────────────────────
+
+  // Which API direction label to read for trains going from origin toward dest?
+  function getApiDirection(origin, dest) {
+    for (const line of LINES) {
+      const oi = line.indexOf(origin);
+      const di = line.indexOf(dest);
+      if (oi === -1 || di === -1) continue;
+      if (di > oi) return 'ToNY';
+      if (di < oi) return 'ToNJ';
+    }
+    return null; // stations not connected by any direct service
+  }
+
+  // Does a train leaving `origin` with terminal `target` stop at `dest`?
+  function trainServesDest(origin, target, dest) {
+    for (const line of LINES) {
+      const oi = line.indexOf(origin);
+      const ti = line.indexOf(target);
+      if (oi === -1 || ti === -1) continue;
+      const di = line.indexOf(dest);
+      if (di === -1) continue;
+      // dest must lie between origin (exclusive) and target (inclusive)
+      const lo = Math.min(oi, ti);
+      const hi = Math.max(oi, ti);
+      if (di > lo && di <= hi) return true;
+    }
+    return false;
+  }
+
+  // ── Rendering helpers ──────────────────────────────────────────
+
+  function parseColors(str) {
+    if (!str) return ['#888'];
+    return str.split(',').map(c => c.startsWith('#') ? c : '#' + c);
+  }
+
+  function lineColorsHtml(str) {
+    return parseColors(str).map(c =>
+      `<span class="line-dot" style="background:${c}"></span>`
+    ).join('');
+  }
+
+  function minsFromSeconds(secs) {
+    return Math.round(parseInt(secs, 10) / 60);
+  }
+
+  function arrivalTimeStr(secs) {
+    const t = new Date(Date.now() + parseInt(secs, 10) * 1000);
+    return t.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  }
+
+  function trainRowHtml(msg, note, dimmed) {
+    const mins = minsFromSeconds(msg.secondsToArrival);
+    let cls = '', text, label;
+    if (mins <= 0) {
+      cls = 'now';  text = 'Now'; label = '';
+    } else if (mins <= 3) {
+      cls = 'soon'; text = String(mins); label = 'min';
+    } else {
+      text = String(mins); label = 'min';
+    }
+    const arrival = mins > 0 ? `<div class="arrival-time">${arrivalTimeStr(msg.secondsToArrival)}</div>` : '';
+    return `
+      <div class="train-row${dimmed ? ' dim' : ''}">
+        <div class="line-colors">${lineColorsHtml(msg.lineColor)}</div>
+        <div class="train-info">
+          <div class="train-headsign">${msg.headSign}</div>
+          ${note ? `<div class="train-note">${note}</div>` : ''}
+        </div>
+        <div class="train-time">
+          <div class="minutes ${cls}">${text}</div>
+          ${label ? `<div class="minutes-label">${label}</div>` : ''}
+          ${arrival}
+        </div>
+      </div>`;
+  }
+
+  function getStationMessages(results, stationCode, direction) {
+    const station = results.find(s => s.consideredStation === stationCode);
+    if (!station) return [];
+    const dest = (station.destinations || []).find(d => d.label === direction);
+    return dest ? (dest.messages || []) : [];
+  }
+
+  // Render one direction card (outbound or return)
+  function renderCard(from, to, results, labelEl, trainsEl) {
+    labelEl.textContent = `${STATIONS[from] || from} → ${STATIONS[to] || to}`;
+
+    const dir = getApiDirection(from, to);
+    if (!dir) {
+      trainsEl.innerHTML = '<div class="empty">No direct PATH service between these stations</div>';
+      return;
+    }
+
+    const trains = getStationMessages(results, from, dir);
+    if (trains.length === 0) {
+      trainsEl.innerHTML = '<div class="empty">No trains currently</div>';
+      return;
+    }
+
+    const destName   = STATIONS[to] || to;
+    const serving    = trains.filter(m => trainServesDest(from, m.target, to));
+    const notServing = trains.filter(m => !trainServesDest(from, m.target, to));
+
+    let html = '';
+
+    if (serving.length > 0) {
+      html += serving.slice(0, 4).map(m => trainRowHtml(m, null, false)).join('');
+    }
+
+    if (notServing.length > 0) {
+      if (serving.length > 0) {
+        html += `<div class="section-label">Skips ${destName}</div>`;
+        html += notServing.slice(0, 2).map(m => trainRowHtml(m, null, true)).join('');
+      } else {
+        html += `<div class="section-label">No direct ${destName} trains right now</div>`;
+        html += notServing.slice(0, 3).map(m =>
+          trainRowHtml(m, `Does not stop at ${destName}`, false)
+        ).join('');
+      }
+    }
+
+    trainsEl.innerHTML = html || '<div class="empty">No trains found</div>';
+  }
+
+  // ── Current route & rendering ──────────────────────────────────
+
+  function getActiveRoute() {
+    if (activeTabId === 'custom') {
+      return {
+        from: document.getElementById('sel-from').value,
+        to:   document.getElementById('sel-to').value,
+      };
+    }
+    return PRESETS.find(p => p.id === activeTabId) || PRESETS[0];
+  }
+
+  function renderCurrentView(results) {
+    const { from, to } = getActiveRoute();
+    if (!from || !to || from === to) {
+      const msg = '<div class="empty">Select two different stations</div>';
+      document.getElementById('trains-out').innerHTML = msg;
+      document.getElementById('trains-ret').innerHTML = msg;
+      return;
+    }
+    renderCard(from, to, results, document.getElementById('label-out'), document.getElementById('trains-out'));
+    renderCard(to, from, results, document.getElementById('label-ret'), document.getElementById('trains-ret'));
+  }
+
+  // ── Tab bar ────────────────────────────────────────────────────
+
+  function buildTabs() {
+    const sidebar = document.getElementById('tab-sidebar');
+    const tabs = PRESETS.map(p =>
+      `<button class="tab${p.id === activeTabId ? ' active' : ''}" onclick="switchTab('${p.id}')">${p.tabHtml}</button>`
+    );
+    tabs.push(
+      `<button class="tab${activeTabId === 'custom' ? ' active' : ''}" onclick="switchTab('custom')">Custom<br>＋</button>`
+    );
+    sidebar.innerHTML = tabs.join('');
+  }
+
+  function switchTab(id) {
+    activeTabId = id;
+    buildTabs();
+    document.getElementById('custom-picker').style.display = id === 'custom' ? 'block' : 'none';
+    renderCurrentView(lastResults);
+  }
+
+  // ── Custom station picker ──────────────────────────────────────
+
+  function buildPicker() {
+    const opts = Object.entries(STATIONS)
+      .map(([code, name]) => `<option value="${code}">${name}</option>`)
+      .join('');
+    const selFrom = document.getElementById('sel-from');
+    const selTo   = document.getElementById('sel-to');
+    selFrom.innerHTML = opts;
+    selTo.innerHTML   = opts;
+    // Default to James's route
+    selFrom.value = 'GRV';
+    selTo.value   = '23S';
+    selFrom.addEventListener('change', () => renderCurrentView(lastResults));
+    selTo.addEventListener('change',   () => renderCurrentView(lastResults));
+  }
+
+  // ── Progress bar ───────────────────────────────────────────────
+
+  function startProgress() {
+    const fill = document.getElementById('progress-fill');
+    // Snap to 0 with no animation, then animate to 100% over REFRESH_MS
+    fill.style.transition = 'none';
+    fill.style.width = '0%';
+    fill.getBoundingClientRect(); // force layout so the reset is applied
+    fill.style.transition = `width ${REFRESH_MS / 1000}s linear`;
+    fill.style.width = '100%';
+  }
+
+  // ── Fetch & refresh loop ───────────────────────────────────────
+
+  async function refresh() {
+    clearTimeout(refreshTimer);
+    startProgress();
+
+    const statusEl = document.getElementById('status');
+    statusEl.textContent = 'Updating…';
+    statusEl.className   = '';
+
+    try {
+      const res  = await fetch(API_URL);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      lastResults = data.results || [];
+
+      renderCurrentView(lastResults);
+
+      const now = new Date();
+      statusEl.innerHTML =
+        `Updated ${now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}<br>` +
+        `<span style="color:var(--dim);font-size:10px">auto ↻ 30s</span>`;
+
+    } catch (err) {
+      statusEl.textContent = 'Error — tap Refresh';
+      statusEl.className   = 'error';
+      console.error(err);
+    }
+
+    refreshTimer = setTimeout(refresh, REFRESH_MS);
+  }
+
+  function manualRefresh() {
+    clearTimeout(refreshTimer);
+    refresh();
+  }
+
+  // ── Init ───────────────────────────────────────────────────────
+  buildTabs();
+  buildPicker();
+  refresh();
+</script>
+</body>
+</html>
