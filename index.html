@@ -207,6 +207,52 @@
       padding: 8px 16px 4px;
       border-bottom: 1px solid var(--border);
     }
+    /* ── Alerts banner ── */
+    #alerts-banner { display: none; }
+    .alert-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      padding: 10px 16px;
+      border-bottom: 1px solid rgba(0,0,0,0.2);
+    }
+    .alert-item:last-child { border-bottom: none; }
+    .alert-icon { font-size: 15px; flex-shrink: 0; margin-top: 1px; }
+    .alert-body { flex: 1; min-width: 0; }
+    .alert-title { font-size: 13px; font-weight: 600; line-height: 1.3; }
+    .alert-desc  { font-size: 12px; opacity: 0.85; margin-top: 2px; line-height: 1.4; }
+    .alert-banner-high    { background: #5a1a1a; border-bottom: 1px solid #8b2020; color: #ffd0d0; }
+    .alert-banner-medium  { background: #4a3a00; border-bottom: 1px solid #7a6000; color: #ffe8a0; }
+    .alert-banner-low     { background: #1a3a1a; border-bottom: 1px solid #2a6020; color: #c0f0c0; }
+    .alert-banner-default { background: #1a2a4a; border-bottom: 1px solid #2a3a6a; color: #c0d8ff; }
+
+    /* ── Scheduled trains section ── */
+    .sched-section {
+      border-top: 1px solid var(--border);
+      padding: 8px 16px 10px;
+      background: rgba(0,0,0,0.15);
+    }
+    .sched-label {
+      font-size: 10px;
+      font-weight: 600;
+      color: var(--dim);
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      margin-bottom: 6px;
+    }
+    .sched-pills { display: flex; flex-wrap: wrap; gap: 6px; }
+    .sched-pill {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--muted);
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 3px 10px;
+      white-space: nowrap;
+    }
+    .sched-empty, .sched-loading { font-size: 12px; color: var(--dim); font-style: italic; }
+
     .empty {
       padding: 18px 16px;
       color: var(--muted);
@@ -254,6 +300,8 @@
   <div id="progress-fill"></div>
 </div>
 
+<div id="alerts-banner"></div>
+
 <div class="app-layout">
   <nav class="tab-sidebar" id="tab-sidebar"></nav>
 
@@ -295,9 +343,13 @@
 </div>
 
 <script>
-  const PANYNJ_URL = 'https://www.panynj.gov/bin/portauthority/ridepath.json';
-  const API_URL    = 'https://api.codetabs.com/v1/proxy/?quest=' + PANYNJ_URL;
-  const REFRESH_MS = 30000;
+  const PANYNJ_URL        = 'https://www.panynj.gov/bin/portauthority/ridepath.json';
+  const API_URL           = 'https://api.codetabs.com/v1/proxy/?quest=' + PANYNJ_URL;
+  const ALERTS_RAW        = 'https://www.panynj.gov/bin/portauthority/everbridge/incidents?status=Active&department=Path';
+  const ALERTS_URL        = 'https://api.codetabs.com/v1/proxy/?quest=' + encodeURIComponent(ALERTS_RAW);
+  const WEEKDAY_SCHED_RAW = 'https://www.panynj.gov/content/path/en/schedules-maps/weekday-schedules.model.json';
+  const SUNDAY_SCHED_RAW  = 'https://www.panynj.gov/content/path/en/schedules-maps/sunday-schedules.model.json';
+  const REFRESH_MS        = 30000;
 
   // PATH line topology — each array is ordered NJ-terminal → NY-terminal.
   // Higher index = closer to NY. Used to determine direction and which trains stop where.
@@ -328,12 +380,200 @@
   // Preset route pairs shown as quick-select tabs in the left sidebar
   const PRESETS = [
     { id: 'grv-23s', tabHtml: 'Grove St<br>↔ 23rd',  from: 'GRV', to: '23S' },
+    { id: 'grv-wtc', tabHtml: 'Grove St<br>↔ WTC',   from: 'GRV', to: 'WTC' },
     { id: 'exp-wtc', tabHtml: 'Exch Pl<br>↔ WTC',    from: 'EXP', to: 'WTC' },
   ];
 
   let activeTabId  = PRESETS[0].id;
   let lastResults  = [];
   let refreshTimer = null;
+  let scheduleData = null; // null=loading, []=failed, array of parsed tables=ready
+
+  // ── Schedule helpers ───────────────────────────────────────────
+
+  function getScheduleUrl() {
+    const day = new Date().getDay(); // 0=Sun, 6=Sat
+    return (day === 0 || day === 6) ? SUNDAY_SCHED_RAW : WEEKDAY_SCHED_RAW;
+  }
+
+  function parseTimeToMinutes(str) {
+    const m = str.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+    if (!m) return null;
+    let h = parseInt(m[1], 10);
+    const min = parseInt(m[2], 10);
+    if (m[3].toUpperCase() === 'AM') {
+      if (h === 12) h = 0;
+    } else {
+      if (h !== 12) h += 12;
+    }
+    return h * 60 + min;
+  }
+
+  function currentTimeInMinutes() {
+    const now = new Date();
+    return now.getHours() * 60 + now.getMinutes();
+  }
+
+  const HEADER_TO_CODE = {
+    'newark': 'NWK', 'harrison': 'HAR', 'journal square': 'JSQ', 'jsq': 'JSQ',
+    'grove st': 'GRV', 'exchange': 'EXP', 'newport': 'NEW', 'hoboken': 'HOB',
+    'world trade': 'WTC', 'wtc': 'WTC', 'chris st': 'CHR', 'christopher': 'CHR',
+    '9 st': '09S', '9th st': '09S', '14 st': '14S', '14th st': '14S',
+    '23 st': '23S', '23rd st': '23S', '33 st': '33S', '33rd st': '33S',
+  };
+
+  function headerToCode(text) {
+    const lower = text.toLowerCase();
+    for (const [key, code] of Object.entries(HEADER_TO_CODE)) {
+      if (lower.includes(key)) return code;
+    }
+    return null;
+  }
+
+  function parseScheduleTable(html) {
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    const rows = Array.from(doc.querySelectorAll('tr'));
+    if (rows.length < 2) return null;
+    const headers  = Array.from(rows[0].querySelectorAll('td')).map(td => td.textContent.trim());
+    const dataRows = rows.slice(1).map(tr =>
+      Array.from(tr.querySelectorAll('td')).map(td => td.textContent.trim())
+    );
+    return { headers, dataRows };
+  }
+
+  async function loadSchedule() {
+    const raw = getScheduleUrl();
+    const url = 'https://api.codetabs.com/v1/proxy/?quest=' + encodeURIComponent(raw);
+    try {
+      const res = await fetch(url);
+      if (!res.ok) throw new Error('schedule fetch failed');
+      const data = await res.json();
+
+      const root      = data[':items']['root'][':items'];
+      const accordion = root['accordionlist_copy'] || root['accordionlist'];
+      if (!accordion) throw new Error('accordion not found');
+
+      const parsed = [];
+      for (const key of Object.keys(accordion[':items'])) {
+        const item     = accordion[':items'][key];
+        const innerItems = item[':items'] || {};
+        let html = null;
+        for (const subKey of Object.keys(innerItems)) {
+          const candidate = innerItems[subKey].text;
+          if (candidate && candidate.includes('<table')) { html = candidate; break; }
+        }
+        if (!html) continue;
+
+        const table = parseScheduleTable(html);
+        if (!table) continue;
+
+        const columnIndex = {};
+        table.headers.forEach((h, i) => {
+          const code = headerToCode(h);
+          if (code && !(code in columnIndex)) columnIndex[code] = i;
+        });
+
+        parsed.push({ columnIndex, rows: table.dataRows });
+      }
+
+      scheduleData = parsed;
+      if (lastResults.length > 0) renderCurrentView(lastResults);
+    } catch (err) {
+      console.warn('Schedule load failed:', err);
+      scheduleData = [];
+    }
+  }
+
+  function findScheduleTables(from, to) {
+    if (!scheduleData) return [];
+    return scheduleData.filter(table => {
+      const fi = table.columnIndex[from];
+      const ti = table.columnIndex[to];
+      return fi !== undefined && ti !== undefined && fi < ti;
+    });
+  }
+
+  function getNextScheduledTimes(from, to, count = 3) {
+    const tables = findScheduleTables(from, to);
+    if (tables.length === 0) return null;
+
+    const nowMins = currentTimeInMinutes();
+    const isEmpty = s => !s || s === '—' || s === '-' || s.trim() === '';
+
+    // Collect all valid departure times across all matching tables (e.g. direct + via Hoboken)
+    const allTimes = [];
+    for (const table of tables) {
+      const fi = table.columnIndex[from];
+      const ti = table.columnIndex[to];
+      for (const row of table.rows) {
+        if (isEmpty(row[fi]) || isEmpty(row[ti])) continue;
+        const mins = parseTimeToMinutes(row[fi]);
+        if (mins !== null) allTimes.push({ str: row[fi], mins });
+      }
+    }
+
+    if (allTimes.length === 0) return [];
+
+    // Sort chronologically, then wrap: future first, then past (after-midnight wrap)
+    allTimes.sort((a, b) => a.mins - b.mins);
+    const future = allTimes.filter(t => t.mins >  nowMins);
+    const past   = allTimes.filter(t => t.mins <= nowMins);
+
+    return [...future, ...past].slice(0, count).map(t => t.str);
+  }
+
+  function buildScheduledSection(from, to) {
+    if (scheduleData === null) {
+      return '<div class="sched-section"><div class="sched-label">Scheduled</div><div class="sched-loading">Loading schedule…</div></div>';
+    }
+    if (scheduleData.length === 0) return '';
+
+    const times = getNextScheduledTimes(from, to);
+    if (times === null) return '';
+
+    let inner;
+    if (times.length === 0) {
+      inner = '<span class="sched-empty">No more trains today</span>';
+    } else {
+      inner = `<div class="sched-pills">${times.map(t => `<span class="sched-pill">${t}</span>`).join('')}</div>`;
+    }
+    return `<div class="sched-section"><div class="sched-label">Scheduled</div>${inner}</div>`;
+  }
+
+  // ── Alerts banner ──────────────────────────────────────────────
+
+  function renderAlerts(incidents) {
+    const banner = document.getElementById('alerts-banner');
+    if (!incidents || incidents.length === 0) {
+      banner.style.display = 'none';
+      banner.innerHTML = '';
+      return;
+    }
+
+    const items = incidents.map(inc => {
+      const title = inc.name || inc.title || inc.subject || 'Service Alert';
+      const desc  = inc.description || inc.summary || inc.message || inc.details || '';
+      const pri   = (inc.priority || inc.severity || '').toLowerCase();
+      let cls = 'alert-banner-default';
+      let icon = 'ℹ️';
+      if (pri.includes('high') || pri.includes('critical')) { cls = 'alert-banner-high';   icon = '🚨'; }
+      else if (pri.includes('medium') || pri.includes('moderate'))  { cls = 'alert-banner-medium'; icon = '⚠️'; }
+      else if (pri.includes('low'))                                  { cls = 'alert-banner-low';    icon = '📢'; }
+      else if (title.toLowerCase().includes('delay') || title.toLowerCase().includes('suspend')) { cls = 'alert-banner-high'; icon = '🚨'; }
+      else if (title.toLowerCase().includes('slow') || title.toLowerCase().includes('disrupt'))  { cls = 'alert-banner-medium'; icon = '⚠️'; }
+
+      return `<div class="alert-item ${cls}">
+        <div class="alert-icon">${icon}</div>
+        <div class="alert-body">
+          <div class="alert-title">${title}</div>
+          ${desc ? `<div class="alert-desc">${desc}</div>` : ''}
+        </div>
+      </div>`;
+    }).join('');
+
+    banner.innerHTML = items;
+    banner.style.display = 'block';
+  }
 
   // ── Routing logic ──────────────────────────────────────────────
 
@@ -444,21 +684,14 @@
 
     if (serving.length > 0) {
       html += serving.slice(0, 4).map(m => trainRowHtml(m, null, false)).join('');
-    }
-
-    if (notServing.length > 0) {
-      if (serving.length > 0) {
-        html += `<div class="section-label">Skips ${destName}</div>`;
-        html += notServing.slice(0, 2).map(m => trainRowHtml(m, null, true)).join('');
-      } else {
-        html += `<div class="section-label">No direct ${destName} trains right now</div>`;
-        html += notServing.slice(0, 3).map(m =>
-          trainRowHtml(m, `Does not stop at ${destName}`, false)
-        ).join('');
-      }
+    } else {
+      html += `<div class="empty">No direct trains to ${destName} right now</div>`;
     }
 
     trainsEl.innerHTML = html || '<div class="empty">No trains found</div>';
+
+    const schedHtml = buildScheduledSection(from, to);
+    if (schedHtml) trainsEl.insertAdjacentHTML('beforeend', schedHtml);
   }
 
   // ── Current route & rendering ──────────────────────────────────
@@ -545,12 +778,24 @@
     statusEl.className   = '';
 
     try {
-      const res  = await fetch(API_URL);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-      lastResults = data.results || [];
+      const [trainsRes, alertsRes] = await Promise.allSettled([
+        fetch(API_URL),
+        fetch(ALERTS_URL),
+      ]);
 
-      renderCurrentView(lastResults);
+      if (trainsRes.status === 'fulfilled' && trainsRes.value.ok) {
+        const data = await trainsRes.value.json();
+        lastResults = data.results || [];
+        renderCurrentView(lastResults);
+      } else {
+        throw new Error('Train fetch failed');
+      }
+
+      if (alertsRes.status === 'fulfilled' && alertsRes.value.ok) {
+        const alertData = await alertsRes.value.json();
+        renderAlerts(alertData.data || []);
+      }
+      // alerts failure is silent — don't break the app
 
       const now = new Date();
       statusEl.innerHTML =
@@ -574,6 +819,7 @@
   // ── Init ───────────────────────────────────────────────────────
   buildTabs();
   buildPicker();
+  loadSchedule(); // fire-and-forget; re-renders view when schedule data arrives
   refresh();
 </script>
 </body>
