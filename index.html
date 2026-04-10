@@ -793,7 +793,11 @@
 
       if (alertsRes.status === 'fulfilled' && alertsRes.value.ok) {
         const alertData = await alertsRes.value.json();
-        renderAlerts(alertData.data || []);
+        console.log('[alerts raw]', alertData);
+        const incidents = Array.isArray(alertData)
+          ? alertData
+          : (alertData.data || alertData.incidents || alertData.results || alertData.items || []);
+        renderAlerts(incidents);
       }
       // alerts failure is silent — don't break the app
 
